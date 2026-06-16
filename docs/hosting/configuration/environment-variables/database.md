@@ -22,6 +22,9 @@ This page outlines environment variables to configure your chosen database for y
 | `DB_TYPE`<br>/`_FILE` | Enum string:<br> `sqlite`, `postgresdb` | `sqlite` | The database to use. |
 | `DB_TABLE_PREFIX` | * | - | Prefix to use for table names. |
 | `DB_PING_INTERVAL_SECONDS` | Number | `2` | The interval, in seconds, between pings to the database to check if the connection is still alive. |
+| `DB_PING_MAX_FAILURES_BEFORE_RECOVERY` | Number | `3` | Number of consecutive health-check ping failures before n8n considers the connection lost and tears down and reinitializes the connection pool (full recovery). |
+| `DB_RECOVERY_BACKOFF_MIN_MS` | Number | `1000` | Initial delay, in milliseconds, before retrying a failed connection recovery attempt. Recovery uses exponential backoff. |
+| `DB_RECOVERY_BACKOFF_MAX_MS` | Number | `30000` | Maximum delay, in milliseconds, between connection recovery attempts. Caps the exponential backoff. Must be greater than or equal to `DB_RECOVERY_BACKOFF_MIN_MS`. |
 
 ## PostgreSQL
 
