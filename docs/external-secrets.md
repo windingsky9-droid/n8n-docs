@@ -8,19 +8,35 @@ contentType: howto
 
 /// info | Feature availability
 * External secrets are available on Enterprise Self-hosted and Enterprise Cloud plans.
-* n8n supports the following secret providers: 1Password (via [Connect Server](https://developer.1password.com/docs/connect/get-started/)), AWS Secrets Manager, Azure Key Vault, GCP Secrets Manager, and HashiCorp Vault.
+* n8n supports the following secret providers: 1Password (via [Connect Server](https://developer.1password.com/docs/connect/get-started/)), AWS Secrets Manager, Azure Key Vault, GCP Secrets Manager, HashiCorp Vault, and Infisical.
 * From n8n version 2.10.0 you can connect multiple vaults per secret provider. Older versions only support one vault per provider.
 * From version `2.13.0`, if enabled, project editors can use external secrets within their projects, and project admins can also manage project vaults.
 * n8n doesn't support [HashiCorp Vault Secrets](https://developer.hashicorp.com/hcp/docs/vault-secrets).
 ///
 
-/// warning | Infisical deprecation
-Infisical is deprecated. From version 2.10.0, you can't connect new Infisical vaults. Existing ones remain for now.
-///
 
 You can use an external secrets store to manage [credentials](/glossary.md#credential-n8n) for n8n.
 
 n8n stores all credentials encrypted in its database, and restricts access to them by default. With the external secrets feature, you can store sensitive credential information in an external vault, and have n8n load it in when required. This provides an extra layer of security and allows you to manage credentials used across multiple [n8n environments](/source-control-environments/index.md) in one central place.
+
+## Global vaults
+
+By default, a secrets vault is **global**: users across the instance can use credentials that reference secrets from that vault.
+
+In personal projects, only instance owners and admins can use secrets from global vaults in credentials.
+
+## Project vaults
+
+Instance admins can share a vault with a specific [project](/user-management/rbac/projects.md). Once you assign a vault to a project, only that project’s credentials can reference its secrets. You can choose to tie a vault to a single project or keep it global.
+
+To change the vault scope:
+
+1. In n8n, go to **Settings** > **External Secrets**.
+1. Find the vault you want to configure and select **Edit**.
+1. Under **Share**, choose one of the following:
+    - **Global**: Share this vault across your entire n8n instance. This allows credentials across the instance to reference these secrets.
+    - **Project**: Restrict this vault to a specific project. Choosing a project limits secret access to only that project's credentials.
+1. **Save** your configuration.
 
 ## Connect n8n to your secrets store
 
@@ -156,20 +172,41 @@ path "kv/*" {
 }
 ```
 
-## Share vault
+### Infisical
 
-By default, a secrets vault is **global**: users across the instance can use credentials that reference secrets from that vault.
+/// note | Version `2.26.0` and later
+Infisical secrets management support is only available from version `2.26.0`.
+///
 
-Instance admins can share a vault with a specific [project](/user-management/rbac/projects.md). Once you assign a vault to a project, only that project’s credentials can reference its secrets. You can choose to tie a vault to a single project or keep it global.
 
-To change the vault scope:
+To connect Infisical, provide the following:
 
-1. In n8n, go to **Settings** > **External Secrets**.
-1. Find the vault you want to configure and select **Edit**.
-1. Under **Share**, choose one of the following:
-    - **Global**: Share this vault across your entire n8n instance. This allows credentials across the instance to reference these secrets.
-    - **Project**: Restrict this vault to a specific project. Choosing a project limits secret access to only that project's credentials.
-1. **Save** your configuration.
+- **Site URL**: the base URL of your Infisical instance. Defaults to `https://app.infisical.com`. Change it only if you're self-hosting Infisical.
+- **Project ID**: the ID of the Infisical project to read secrets from.
+- **Environment**: the environment slug, for example `dev`, `staging`, or `prod`.
+- **Secret Path**: the path within the project to read secrets from. Defaults to `/`.
+- **Authentication Method**: choose **Universal Auth** (recommended) or **Access Token**.
+
+n8n recommends Universal Auth, which uses an Infisical [Machine Identity](https://infisical.com/docs/documentation/platform/identities/machine-identities){:target="_blank" .external-link}. Tokens refresh automatically before they expire.
+
+In Infisical, grant the Machine Identity a role with permission to read secrets in the target project. The built-in **Viewer** role works, or you can create a custom role that grants the `secrets` permissions **Read Value** and **Describe Secret** on the target environment and secret path. See Infisical's [project role docs](https://infisical.com/docs/documentation/platform/access-controls/role-based-access-controls){:target="_blank" .external-link}.
+
+=== "Universal Auth"
+
+    Provide:
+
+    - **Client ID**: the machine identity's Client ID.
+    - **Client Secret**: the machine identity's Client Secret.
+
+    In Infisical, create a machine identity, attach it to the project with the role described above, then copy the Client ID and Client Secret. See Infisical's [Universal Auth docs](https://infisical.com/docs/documentation/platform/identities/universal-auth){:target="_blank" .external-link}.
+
+=== "Access Token"
+
+    Provide:
+
+    - **Access Token**: the token issued inside the machine identity.
+
+    In Infisical, create a machine identity, attach it to the project with the role described above, then click on `Add Auth Method` and select `Token Auth`. See Infisical's [Token auth docs](https://infisical.com/docs/documentation/platform/identities/token-auth){:target="_blank" .external-link}.
 
 ## Use secrets in n8n credentials
 
@@ -188,12 +225,12 @@ To use a secret from your store in an n8n credential:
 ## Using external secrets with n8n environments
 
 n8n's [Source control and environments](/source-control-environments/index.md) feature allows you to create different n8n environments, backed by Git. The feature doesn't support using different credentials in different instances. You can use an external secrets vault to provide different credentials for different environments by connecting each n8n instance to a different vault or project environment.
-\
+
 For example, you have two n8n instances, one for development and one for production. In your secrets provider, create a project with two environments, development and production. Generate a token for each environment of your secrets provider. Use the token for the development environment to connect your development n8n instance, and the token for your production environment to connect your production n8n instance.
 
 ## Using external secrets in projects
 
-You can share a vault with a project so that only that project's credentials can reference its secrets. Refer to [Share vault](#share-vault) for setup steps. Project-scoped vaults are available from version `2.11.0`.
+You can share a vault with a project so that only that project's credentials can reference its secrets. Refer to [Project vaults](#project-vaults) for setup steps. Project-scoped vaults are available from version `2.11.0`.
 
 ### Access for project roles
 
@@ -226,7 +263,7 @@ Global vaults created in **Settings** > **External Secrets** are visible in **Pr
 
 For more fine-grained access control, instance owners and admins can create a [custom project role](/user-management/rbac/custom-roles.md). Go to **Settings** > **Project roles** > **Create role**. In the list of permissions, configure:
 
-- **Secrets vaults**: Controls vault management (create, view, edit, delete, and sync vaults).
+- **Secrets vaults**: Controls vault management (view, create, edit, delete, and sync vaults).
 - **Secrets**: Controls whether the role can use secrets in credential expressions.
 
 Both permissions are independent. For example, a role may need only the **Secrets** permission to use secrets in credentials without managing vaults. Refer to [Secret vault scopes](/user-management/rbac/custom-roles.md#secret-vault-scopes) for the full list of available scopes.
