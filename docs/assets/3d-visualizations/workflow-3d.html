@@ -1,153 +1,673 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>n8n 3D Workflow Visualization</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f0f0f;
-            color: #fff;
-        }
-        #canvas-container { 
-            width: 100%;
-            height: 100vh;
-            position: relative;
-        }
-        #info {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 20px;
-            border-radius: 8px;
-            font-size: 14px;
-            max-width: 300px;
-            z-index: 10;
-        }
-        h2 { margin-bottom: 10px; color: #00d9ff; }
-        p { margin: 5px 0; line-height: 1.6; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>n8n workflow in 3D</title>
+<meta name="description" content="An interactive 3D view of an n8n workflow. Execute it and watch an item travel from the trigger, through an If node, to an AI agent or a nurture email.">
+<style>
+	:root {
+		--bg: #0e0f15;
+		--card: rgba(20, 22, 31, 0.84);
+		--line: rgba(255, 255, 255, 0.09);
+		--text: #f2f3f7;
+		--muted: #9aa0b4;
+		--brand: #ea4b71;
+		--brand-hi: #ff6b8d;
+		--ok: #3ecf8e;
+		--trigger: #ff8a3d;
+		--data: #5b8def;
+		--logic: #3ecf8e;
+		--ai: #a78bfa;
+		--app: #ea4b71;
+		--font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+		--mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	}
+	* { box-sizing: border-box; }
+	html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); overflow: hidden; }
+	#stage { position: fixed; inset: 0; }
+	#stage canvas { display: block; outline: none; }
+	.card {
+		position: absolute; z-index: 10; background: var(--card); border: 1px solid var(--line);
+		border-radius: 14px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+	}
+	.title { top: 18px; left: 18px; width: min(360px, calc(100vw - 36px)); padding: 16px 18px; }
+	.title h1 { margin: 0 0 6px; font-size: 18px; line-height: 1.25; }
+	.title h1 span { color: var(--brand); }
+	.title p { margin: 0; color: var(--muted); font-size: 13px; }
+	.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+	.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: 0; }
+	.controls { top: 18px; right: 18px; padding: 10px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - 36px); }
+	button {
+		font: 600 13px/1 var(--font); color: var(--text); background: rgba(255, 255, 255, 0.06);
+		border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 9px; padding: 10px 13px; cursor: pointer;
+		transition: background 0.15s, border-color 0.15s, transform 0.15s;
+	}
+	button:hover { background: rgba(255, 255, 255, 0.12); }
+	button:focus-visible { outline: 2px solid var(--brand-hi); outline-offset: 2px; }
+	button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+	button.primary:hover { background: var(--brand-hi); }
+	button:disabled { opacity: 0.6; cursor: progress; }
+	button[aria-pressed="false"] { color: var(--muted); }
+	.log { left: 18px; bottom: 18px; width: min(380px, calc(100vw - 36px)); max-height: 38vh; display: flex; flex-direction: column; }
+	.log header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px 8px; border-bottom: 1px solid var(--line); }
+	.log h2, .inspector h2 { margin: 0; font-size: 13px; letter-spacing: 0.04em; }
+	.log .status { font: 600 12px/1 var(--mono); color: var(--muted); }
+	.log .status.ok { color: var(--ok); }
+	.log ol { list-style: none; margin: 0; padding: 8px 16px 12px; overflow-y: auto; font: 12px/1.6 var(--mono); }
+	.log li { display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; color: var(--muted); }
+	.log li b { color: var(--text); font-weight: 600; }
+	.log li .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; background: var(--ok); }
+	.log li.info .dot { background: var(--muted); }
+	.log li.empty { display: block; color: var(--muted); }
+	.inspector { right: 18px; bottom: 18px; width: min(360px, calc(100vw - 36px)); max-height: 56vh; overflow-y: auto; padding: 14px 16px 16px; }
+	.inspector header { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+	.inspector .type { font: 12px/1.4 var(--mono); color: var(--muted); margin-top: 3px; word-break: break-all; }
+	.inspector .chip { display: inline-block; margin-top: 8px; font: 600 11px/1 var(--font); padding: 5px 8px; border-radius: 999px; color: #0e0f15; }
+	.inspector dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 12px 0 0; font-size: 12.5px; }
+	.inspector dt { color: var(--muted); }
+	.inspector dd { margin: 0; word-break: break-word; }
+	.inspector h3 { margin: 14px 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; }
+	.inspector pre { margin: 0; padding: 10px; border-radius: 9px; background: rgba(0, 0, 0, 0.35); border: 1px solid var(--line); font: 11.5px/1.5 var(--mono); color: #cfe9d9; overflow-x: auto; }
+	.inspector .close { padding: 6px 9px; }
+	.node-label { text-align: center; pointer-events: none; transform: translateY(6px); white-space: nowrap; }
+	.node-label b { display: block; font: 600 13px/1.25 var(--font); color: var(--text); text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9); }
+	.node-label span { display: block; font: 11.5px/1.3 var(--font); color: var(--muted); text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9); }
+	.edge-label { font: 600 11px/1 var(--font); color: var(--muted); background: rgba(14, 15, 21, 0.85); border: 1px solid var(--line); padding: 4px 7px; border-radius: 999px; pointer-events: none; white-space: nowrap; }
+	.edge-label.ok { color: var(--ok); border-color: rgba(62, 207, 142, 0.45); }
+	.hint { position: absolute; z-index: 9; left: 50%; bottom: 18px; transform: translateX(-50%); font-size: 12px; color: var(--muted); pointer-events: none; }
+	#fallback { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); }
+	[hidden] { display: none !important; }
+	@media (max-width: 760px) {
+		.title { width: calc(100vw - 36px); }
+		.title p, .legend { display: none; }
+		.controls { top: auto; bottom: 18px; right: 18px; left: 18px; justify-content: stretch; }
+		.controls button { flex: 1; }
+		.log { bottom: 82px; max-height: 26vh; }
+		.inspector { bottom: 82px; max-height: 44vh; }
+		.hint { display: none; }
+		.node-label span { display: none; }
+		.node-label b { font-size: 10.5px; }
+		.edge-label { font-size: 9.5px; padding: 3px 6px; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		button { transition: none; }
+	}
+</style>
+<script type="importmap">
+{
+	"imports": {
+		"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+		"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+	}
+}
+</script>
 </head>
 <body>
 
-<div id="canvas-container"></div>
+<div id="stage" aria-label="3D view of an n8n workflow"></div>
 
-<div id="info">
-    <h2>n8n 3D Workflow</h2>
-    <p>Interactive visualization of workflow nodes and connections.</p>
-    <p><strong>Controls:</strong></p>
-    <p>🖱 Drag to rotate<br>🔄 Scroll to zoom</p>
+<section class="card title">
+	<h1><span>n8n</span> workflow in 3D</h1>
+	<p>Select <b>Execute workflow</b> to send a lead through: the <b>If</b> node routes high scores to an AI agent and Slack, and the rest to a nurture sheet and email. The execution is simulated in your browser.</p>
+	<div class="legend" aria-label="Node categories">
+		<span><i style="background:var(--trigger)"></i>Trigger</span>
+		<span><i style="background:var(--data)"></i>Data</span>
+		<span><i style="background:var(--logic)"></i>Flow</span>
+		<span><i style="background:var(--ai)"></i>AI</span>
+		<span><i style="background:var(--app)"></i>App</span>
+	</div>
+</section>
+
+<div class="card controls">
+	<button id="run" class="primary" type="button">Execute workflow</button>
+	<button id="reset" type="button">Reset view</button>
+	<button id="sway" type="button" aria-pressed="true">Drift</button>
 </div>
 
-<script>
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0f0f0f);
-    
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 0, 30);
-    
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.getElementById('canvas-container').appendChild(renderer.domElement);
-    
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambientLight);
-    
-    const pointLight = new THREE.PointLight(0x00d9ff, 1);
-    pointLight.position.set(20, 20, 20);
-    scene.add(pointLight);
-    
-    const workflowNodes = [
-        { id: 1, name: 'Trigger', pos: [-15, 0, 0], color: 0x00ff00 },
-        { id: 2, name: 'API Call', pos: [0, 10, 0], color: 0x0099ff },
-        { id: 3, name: 'Transform', pos: [0, -10, 0], color: 0x0099ff },
-        { id: 4, name: 'Send Email', pos: [15, 5, 0], color: 0xff6600 },
-        { id: 5, name: 'Log Result', pos: [15, -5, 0], color: 0xff6600 },
-    ];
-    
-    const connections = [
-        { from: 1, to: 2 },
-        { from: 1, to: 3 },
-        { from: 2, to: 4 },
-        { from: 3, to: 5 },
-    ];
-    
-    const nodes = {};
-    
-    workflowNodes.forEach(nodeData => {
-        const geometry = new THREE.BoxGeometry(2, 2, 2);
-        const material = new THREE.MeshStandardMaterial({ 
-            color: nodeData.color,
-            metalness: 0.3,
-            roughness: 0.4,
-            emissive: nodeData.color,
-            emissiveIntensity: 0.2
-        });
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.position.set(...nodeData.pos);
-        scene.add(mesh);
-        
-        nodes[nodeData.id] = { mesh, data: nodeData };
-    });
-    
-    connections.forEach(conn => {
-        const start = nodes[conn.from].mesh.position;
-        const end = nodes[conn.to].mesh.position;
-        
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(
-            new Float32Array([start.x, start.y, start.z, end.x, end.y, end.z]),
-            3
-        ));
-        
-        const material = new THREE.LineBasicMaterial({ color: 0x00d9ff, linewidth: 2 });
-        const line = new THREE.Line(geometry, material);
-        scene.add(line);
-    });
-    
-    let isDragging = false;
-    let previousMousePosition = { x: 0, y: 0 };
-    
-    document.addEventListener('mousedown', () => { isDragging = true; });
-    document.addEventListener('mouseup', () => { isDragging = false; });
-    
-    document.addEventListener('mousemove', (e) => {
-        if (isDragging) {
-            const deltaX = e.clientX - previousMousePosition.x;
-            const deltaY = e.clientY - previousMousePosition.y;
-            scene.rotation.y += deltaX * 0.01;
-            scene.rotation.x += deltaY * 0.01;
-        }
-        previousMousePosition = { x: e.clientX, y: e.clientY };
-    });
-    
-    window.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        camera.position.z += e.deltaY * 0.05;
-        camera.position.z = Math.max(10, Math.min(100, camera.position.z));
-    });
-    
-    function animate() {
-        requestAnimationFrame(animate);
-        Object.values(nodes).forEach(node => {
-            const time = Date.now() * 0.001;
-            node.mesh.position.y += Math.sin(time + node.data.id) * 0.0005;
-        });
-        renderer.render(scene, camera);
-    }
-    
-    animate();
-    
-    window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-</script>
+<aside class="card log" aria-live="polite">
+	<header><h2>Executions</h2><span class="status" id="status">Not run yet</span></header>
+	<ol id="log"><li class="empty">Execute the workflow to see each node run.</li></ol>
+</aside>
 
+<aside class="card inspector" id="inspector" hidden aria-live="polite"></aside>
+
+<div class="hint">Drag to orbit · scroll to zoom · select a node to inspect it</div>
+
+<div id="fallback" hidden>
+	<p>This view needs WebGL, which isn't available in this browser.</p>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const CAT = {
+	trigger: { color: 0xff8a3d, name: 'Trigger' },
+	data: { color: 0x5b8def, name: 'Data' },
+	logic: { color: 0x3ecf8e, name: 'Flow' },
+	ai: { color: 0xa78bfa, name: 'AI' },
+	app: { color: 0xea4b71, name: 'App' },
+};
+const OK = 0x3ecf8e;
+const EDGE_IDLE = 0x4a4f62;
+
+// ---------------------------------------------------------------- workflow
+const NODES = [
+	{ id: 'webhook', name: 'Webhook', sub: 'POST /lead', type: 'n8n-nodes-base.webhook', cat: 'trigger', pos: [-14, 0, 0], glyph: 'bolt', trigger: true,
+		params: { 'HTTP method': 'POST', Path: '/lead', Respond: 'Using Respond to Webhook node' } },
+	{ id: 'set', name: 'Edit Fields', sub: 'Normalize the lead', type: 'n8n-nodes-base.set', cat: 'data', pos: [-9.5, 0, 0], glyph: 'pencil',
+		params: { Mode: 'Manual mapping', Fields: 'name, email, company, score' } },
+	{ id: 'if', name: 'If', sub: 'score > 70', type: 'n8n-nodes-base.if', cat: 'logic', pos: [-5, 0, 0], glyph: 'branch', outputs: ['true', 'false'],
+		params: { Condition: '{{ $json.score }} is greater than 70' } },
+	{ id: 'agent', name: 'AI Agent', sub: 'Draft a sales brief', type: '@n8n/n8n-nodes-langchain.agent', cat: 'ai', pos: [0.5, 2.9, 0], glyph: 'spark',
+		params: { Prompt: 'Summarize the lead and suggest an opener', 'Chat model': 'OpenAI Chat Model', Memory: 'Simple Memory', Tools: 'HTTP Request Tool' } },
+	{ id: 'model', name: 'OpenAI Chat Model', sub: 'Model', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', cat: 'ai', pos: [-1.5, 1.0, 3.4], glyph: 'chip', subNode: true,
+		params: { Model: 'gpt-4o-mini', Temperature: '0.3' } },
+	{ id: 'memory', name: 'Simple Memory', sub: 'Memory', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow', cat: 'ai', pos: [0.8, 1.0, 3.4], glyph: 'memory', subNode: true,
+		params: { 'Context window length': '5' } },
+	{ id: 'tool', name: 'HTTP Request Tool', sub: 'Tool', type: '@n8n/n8n-nodes-langchain.toolHttpRequest', cat: 'ai', pos: [3.1, 1.0, 3.4], glyph: 'globe', subNode: true,
+		params: { Description: 'Look up the company website', Method: 'GET' } },
+	{ id: 'sheets', name: 'Google Sheets', sub: 'Append to nurture list', type: 'n8n-nodes-base.googleSheets', cat: 'app', pos: [0.5, -2.9, 0], glyph: 'sheet',
+		params: { Operation: 'Append row', Sheet: 'Nurture' } },
+	{ id: 'slack', name: 'Slack', sub: 'Notify sales', type: 'n8n-nodes-base.slack', cat: 'app', pos: [5.5, 2.9, 0], glyph: 'chat',
+		params: { Operation: 'Send message', Channel: '#sales-hot-leads' } },
+	{ id: 'gmail', name: 'Gmail', sub: 'Send nurture email', type: 'n8n-nodes-base.gmail', cat: 'app', pos: [5.5, -2.9, 0], glyph: 'mail',
+		params: { Operation: 'Send', To: '{{ $json.email }}' } },
+	{ id: 'respond', name: 'Respond to Webhook', sub: 'Return 200', type: 'n8n-nodes-base.respondToWebhook', cat: 'logic', pos: [10.5, 0, 0], glyph: 'reply',
+		params: { 'Respond with': 'JSON', 'Response code': '200' } },
+];
+const EDGES = [
+	{ from: 'webhook', to: 'set' },
+	{ from: 'set', to: 'if' },
+	{ from: 'if', to: 'agent', out: 0 },
+	{ from: 'if', to: 'sheets', out: 1 },
+	{ from: 'agent', to: 'slack' },
+	{ from: 'sheets', to: 'gmail' },
+	{ from: 'slack', to: 'respond' },
+	{ from: 'gmail', to: 'respond' },
+	{ from: 'model', to: 'agent', sub: true },
+	{ from: 'memory', to: 'agent', sub: true },
+	{ from: 'tool', to: 'agent', sub: true },
+];
+const LEADS = [
+	{ name: 'Ada Lovelace', email: 'ada@example.com', company: 'Analytical Engines Ltd', score: 92 },
+	{ name: 'Grace Hopper', email: 'grace@example.com', company: 'Compiler Co', score: 41 },
+	{ name: 'Alan Turing', email: 'alan@example.com', company: 'Bletchley Labs', score: 77 },
+	{ name: 'Katherine Johnson', email: 'katherine@example.com', company: 'Orbital Math', score: 58 },
+];
+
+// ---------------------------------------------------------------- renderer
+const stage = document.getElementById('stage');
+let renderer;
+try {
+	renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+} catch (err) {
+	document.getElementById('fallback').hidden = false;
+	throw err;
+}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+stage.appendChild(renderer.domElement);
+
+const labels = new CSS2DRenderer();
+labels.setSize(window.innerWidth, window.innerHeight);
+Object.assign(labels.domElement.style, { position: 'absolute', inset: '0', pointerEvents: 'none' });
+stage.appendChild(labels.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e0f15);
+scene.fog = new THREE.FogExp2(0x0e0f15, 0.016);
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 300);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.minDistance = 10;
+controls.maxDistance = 150;
+controls.maxPolarAngle = Math.PI * 0.62;
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.85, 0.55, 0.18);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+scene.add(new THREE.HemisphereLight(0xc9d6ff, 0x12131c, 1.6));
+const key = new THREE.DirectionalLight(0xffffff, 2.4);
+key.position.set(6, 10, 14);
+scene.add(key);
+const rim = new THREE.PointLight(0xea4b71, 60, 50, 2);
+rim.position.set(0, -4, 8);
+scene.add(rim);
+
+// ---------------------------------------------------------------- helpers
+function glyphTexture(kind) {
+	const c = document.createElement('canvas');
+	c.width = c.height = 256;
+	const g = c.getContext('2d');
+	g.strokeStyle = '#fff';
+	g.fillStyle = '#fff';
+	g.lineWidth = 16;
+	g.lineCap = 'round';
+	g.lineJoin = 'round';
+	const p = (pts, fill) => { g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); fill ? g.fill() : g.stroke(); };
+	switch (kind) {
+		case 'bolt': p([[146, 34], [74, 140], [124, 140], [104, 222], [182, 108], [130, 108]], true); break;
+		case 'pencil':
+			g.translate(128, 128); g.rotate(-Math.PI / 4);
+			g.strokeRect(-26, -86, 52, 132); p([[-26, 46], [26, 46], [0, 92]]); g.setTransform(1, 0, 0, 1, 0, 0); break;
+		case 'branch':
+			g.beginPath(); g.moveTo(44, 128); g.lineTo(104, 128); g.bezierCurveTo(140, 128, 140, 72, 176, 72); g.moveTo(104, 128); g.bezierCurveTo(140, 128, 140, 184, 176, 184); g.stroke();
+			[[200, 72], [200, 184], [44, 128]].forEach(([x, y]) => { g.beginPath(); g.arc(x, y, 18, 0, Math.PI * 2); g.fill(); }); break;
+		case 'spark':
+			p([[128, 36], [148, 108], [220, 128], [148, 148], [128, 220], [108, 148], [36, 128], [108, 108]], true);
+			p([[196, 40], [204, 64], [228, 72], [204, 80], [196, 104], [188, 80], [164, 72], [188, 64]], true); break;
+		case 'chip':
+			g.strokeRect(78, 78, 100, 100); g.fillRect(108, 108, 40, 40);
+			for (let i = 0; i < 3; i++) { const o = 96 + i * 32; [[o, 78, o, 48], [o, 178, o, 208], [78, o, 48, o], [178, o, 208, o]].forEach(([a, b, c2, d]) => { g.beginPath(); g.moveTo(a, b); g.lineTo(c2, d); g.stroke(); }); }
+			break;
+		case 'memory':
+			[[60], [112], [164]].forEach(([y]) => { g.beginPath(); g.ellipse(128, y, 64, 20, 0, 0, Math.PI * 2); g.stroke(); });
+			g.beginPath(); g.moveTo(64, 60); g.lineTo(64, 164); g.moveTo(192, 60); g.lineTo(192, 164); g.stroke(); break;
+		case 'globe':
+			g.beginPath(); g.arc(128, 128, 80, 0, Math.PI * 2); g.stroke();
+			g.beginPath(); g.ellipse(128, 128, 34, 80, 0, 0, Math.PI * 2); g.stroke();
+			g.beginPath(); g.moveTo(48, 128); g.lineTo(208, 128); g.stroke(); break;
+		case 'sheet':
+			g.strokeRect(58, 46, 140, 164);
+			[100, 140, 176].forEach((y) => { g.beginPath(); g.moveTo(58, y); g.lineTo(198, y); g.stroke(); });
+			g.beginPath(); g.moveTo(112, 100); g.lineTo(112, 210); g.stroke(); break;
+		case 'chat':
+			g.beginPath(); g.moveTo(60, 60); g.lineTo(196, 60); g.quadraticCurveTo(212, 60, 212, 76); g.lineTo(212, 148); g.quadraticCurveTo(212, 164, 196, 164);
+			g.lineTo(112, 164); g.lineTo(72, 204); g.lineTo(76, 164); g.lineTo(60, 164); g.quadraticCurveTo(44, 164, 44, 148); g.lineTo(44, 76); g.quadraticCurveTo(44, 60, 60, 60); g.stroke();
+			[96, 128, 160].forEach((x) => { g.beginPath(); g.arc(x, 112, 9, 0, Math.PI * 2); g.fill(); }); break;
+		case 'mail':
+			g.strokeRect(42, 70, 172, 120); p([[42, 70], [128, 140], [214, 70]]); break;
+		case 'reply':
+			g.beginPath(); g.moveTo(96, 72); g.lineTo(44, 120); g.lineTo(96, 168); g.moveTo(44, 120); g.lineTo(150, 120); g.quadraticCurveTo(212, 120, 212, 182); g.stroke(); break;
+		case 'check':
+			g.lineWidth = 30; g.beginPath(); g.moveTo(64, 132); g.lineTo(108, 176); g.lineTo(194, 84); g.stroke(); break;
+	}
+	const t = new THREE.CanvasTexture(c);
+	t.colorSpace = THREE.SRGBColorSpace;
+	t.anisotropy = 4;
+	return t;
+}
+
+function roundedOutline(w, h, rLeft, rRight) {
+	const s = new THREE.Shape();
+	const x = -w / 2, y = -h / 2;
+	s.moveTo(x + rLeft, y);
+	s.lineTo(x + w - rRight, y);
+	s.quadraticCurveTo(x + w, y, x + w, y + rRight);
+	s.lineTo(x + w, y + h - rRight);
+	s.quadraticCurveTo(x + w, y + h, x + w - rRight, y + h);
+	s.lineTo(x + rLeft, y + h);
+	s.quadraticCurveTo(x, y + h, x, y + h - rLeft);
+	s.lineTo(x, y + rLeft);
+	s.quadraticCurveTo(x, y, x + rLeft, y);
+	return new THREE.BufferGeometry().setFromPoints(s.getPoints(12));
+}
+
+function label(html, cls) {
+	const el = document.createElement('div');
+	el.className = cls;
+	el.innerHTML = html;
+	return new CSS2DObject(el);
+}
+
+// ---------------------------------------------------------------- build graph
+const graph = new THREE.Group();
+scene.add(graph);
+const nodeById = {};
+const pickables = [];
+
+const cardGeo = new RoundedBoxGeometry(2.2, 2.2, 0.55, 4, 0.24);
+const discGeo = new THREE.CylinderGeometry(0.85, 0.85, 0.42, 48).rotateX(Math.PI / 2);
+const iconGeo = new THREE.PlaneGeometry(1.25, 1.25);
+const subIconGeo = new THREE.PlaneGeometry(0.95, 0.95);
+
+for (const def of NODES) {
+	const color = new THREE.Color(CAT[def.cat].color);
+	const group = new THREE.Group();
+	group.position.set(...def.pos);
+	const body = new THREE.Mesh(def.subNode ? discGeo : cardGeo, new THREE.MeshStandardMaterial({ color: 0x1c1f2c, metalness: 0.35, roughness: 0.42, emissive: color.clone(), emissiveIntensity: 0.0 }));
+	body.userData.id = def.id;
+	group.add(body);
+	pickables.push(body);
+
+	const icon = new THREE.Mesh(def.subNode ? subIconGeo : iconGeo, new THREE.MeshBasicMaterial({ map: glyphTexture(def.glyph), color: color.clone().multiplyScalar(1.4), transparent: true, toneMapped: false }));
+	icon.position.z = def.subNode ? 0.22 : 0.29;
+	group.add(icon);
+
+	const outlineGeo = def.subNode
+		? new THREE.BufferGeometry().setFromPoints(new THREE.Path().absarc(0, 0, 0.9, 0, Math.PI * 2).getPoints(64))
+		: roundedOutline(2.36, 2.36, def.trigger ? 1.1 : 0.34, 0.34);
+	const outline = new THREE.LineLoop(outlineGeo, new THREE.LineBasicMaterial({ color: color.clone(), transparent: true, opacity: 0.55, toneMapped: false }));
+	outline.position.z = def.subNode ? 0.22 : 0.29;
+	group.add(outline);
+
+	const badge = new THREE.Mesh(new THREE.CircleGeometry(0.3, 32), new THREE.MeshBasicMaterial({ color: OK, toneMapped: false }));
+	const tick = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.42), new THREE.MeshBasicMaterial({ map: glyphTexture('check'), color: 0x0e0f15, transparent: true }));
+	tick.position.z = 0.01;
+	badge.add(tick);
+	badge.position.set(def.subNode ? 0.62 : 1.02, def.subNode ? 0.62 : 1.02, 0.36);
+	badge.visible = false;
+	group.add(badge);
+
+	const lab = label(`<b>${def.name}</b><span>${def.sub}</span>`, 'node-label');
+	lab.position.set(0, def.subNode ? -1.25 : -1.62, 0);
+	group.add(lab);
+
+	if (def.outputs) {
+		def.outputs.forEach((name, i) => {
+			const l = label(name, 'edge-label');
+			l.position.set(1.75, i === 0 ? 0.62 : -0.62, 0.2);
+			group.add(l);
+		});
+	}
+
+	graph.add(group);
+	nodeById[def.id] = { def, group, body, icon, outline, badge, color, state: 'idle', pulse: 0, output: null };
+}
+
+// Centre the graph.
+const box = new THREE.Box3().setFromObject(graph);
+const centre = box.getCenter(new THREE.Vector3());
+graph.position.set(-centre.x, -centre.y, 0);
+
+// Connections.
+const edges = [];
+const pktGeo = new THREE.SphereGeometry(0.14, 16, 16);
+for (const e of EDGES) {
+	const a = nodeById[e.from], b = nodeById[e.to];
+	let p0, p3, c1, c2;
+	if (e.sub) {
+		p0 = a.group.position.clone().add(new THREE.Vector3(0, 0.9, 0));
+		p3 = b.group.position.clone().add(new THREE.Vector3((a.def.pos[0] - b.def.pos[0]) * 0.28, -1.12, 0));
+		c1 = p0.clone().add(new THREE.Vector3(0, 1.0, -0.6));
+		c2 = p3.clone().add(new THREE.Vector3(0, -1.0, 0.8));
+	} else {
+		const outs = a.def.outputs ? a.def.outputs.length : 1;
+		const yOff = outs > 1 ? (e.out === 0 ? 0.55 : -0.55) : 0;
+		p0 = a.group.position.clone().add(new THREE.Vector3(1.12, yOff, 0));
+		p3 = b.group.position.clone().add(new THREE.Vector3(-1.12, 0, 0));
+		const dx = Math.max(1.4, (p3.x - p0.x) * 0.5);
+		c1 = p0.clone().add(new THREE.Vector3(dx, 0, 0));
+		c2 = p3.clone().add(new THREE.Vector3(-dx, 0, 0));
+	}
+	const curve = new THREE.CubicBezierCurve3(p0, c1, c2, p3);
+	let line;
+	if (e.sub) {
+		line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(60)), new THREE.LineDashedMaterial({ color: CAT.ai.color, dashSize: 0.22, gapSize: 0.16, transparent: true, opacity: 0.75, toneMapped: false }));
+		line.computeLineDistances();
+	} else {
+		line = new THREE.Mesh(new THREE.TubeGeometry(curve, 80, 0.05, 8), new THREE.MeshStandardMaterial({ color: EDGE_IDLE, emissive: new THREE.Color(OK), emissiveIntensity: 0, metalness: 0.2, roughness: 0.5 }));
+	}
+	graph.add(line);
+	const count = label('1 item', 'edge-label ok');
+	count.position.copy(curve.getPointAt(0.5)).add(new THREE.Vector3(0, 0.38, 0));
+	count.visible = false;
+	graph.add(count);
+	edges.push({ ...e, curve, line, count, key: `${e.from}>${e.to}` });
+}
+const edgeByKey = Object.fromEntries(edges.map((e) => [e.key, e]));
+
+// Dot-grid floor, like the n8n canvas.
+{
+	const pts = [];
+	for (let x = -40; x <= 40; x += 1.1) for (let z = -30; z <= 18; z += 1.1) pts.push(x, -6, z);
+	const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+	scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x3b4058, size: 0.07, sizeAttenuation: true })));
+}
+// Drifting motes.
+const motes = (() => {
+	const n = 260, pts = new Float32Array(n * 3);
+	for (let i = 0; i < n; i++) { pts[i * 3] = (Math.random() - 0.5) * 60; pts[i * 3 + 1] = (Math.random() - 0.3) * 18; pts[i * 3 + 2] = (Math.random() - 0.6) * 30; }
+	const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pts, 3));
+	const m = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xea4b71, size: 0.09, transparent: true, opacity: 0.55, toneMapped: false }));
+	scene.add(m);
+	return m;
+})();
+
+// ---------------------------------------------------------------- camera framing
+const HOME = { theta: 0.0, phi: 1.32 };
+const narrow = () => window.innerWidth < 760;
+const focus = new THREE.Vector3();
+let sway = !reduceMotion;
+const swayBtn = document.getElementById('sway');
+swayBtn.setAttribute('aria-pressed', String(sway));
+
+function fitDistance() {
+	const vfov = THREE.MathUtils.degToRad(camera.fov);
+	const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+	const w = narrow() ? 13 : box.max.x - box.min.x + 4, h = box.max.y - box.min.y + 6;
+	return Math.max((w / 2) / Math.tan(hfov / 2), (h / 2) / Math.tan(vfov / 2)) + 2;
+}
+function home() {
+	focus.set(0, 0, 0);
+	controls.target.set(0, 0, 0);
+	const r = fitDistance();
+	camera.position.setFromSphericalCoords(r, HOME.phi, HOME.theta);
+	camera.lookAt(controls.target);
+	controls.update();
+}
+home();
+controls.addEventListener('start', () => { if (sway) { sway = false; swayBtn.setAttribute('aria-pressed', 'false'); } });
+
+// ---------------------------------------------------------------- execution
+const runBtn = document.getElementById('run');
+const logEl = document.getElementById('log');
+const statusEl = document.getElementById('status');
+let running = false;
+let runIndex = 0;
+const packets = [];
+const speed = reduceMotion ? 0 : 1;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms * speed));
+
+function setState(id, state) {
+	const n = nodeById[id];
+	n.state = state;
+	n.badge.visible = state === 'success';
+	n.outline.material.color.set(state === 'success' ? OK : n.color);
+	n.outline.material.opacity = state === 'skipped' ? 0.15 : state === 'idle' ? 0.55 : 1;
+	n.icon.material.opacity = state === 'skipped' ? 0.3 : 1;
+	n.body.material.emissiveIntensity = state === 'success' ? 0.06 : 0;
+}
+function resetRun() {
+	for (const id in nodeById) { setState(id, 'idle'); nodeById[id].output = null; }
+	for (const e of edges) {
+		e.count.visible = false;
+		if (!e.sub) { e.line.material.color.set(EDGE_IDLE); e.line.material.emissiveIntensity = 0; }
+	}
+}
+function time() { const d = new Date(); return d.toTimeString().slice(0, 8); }
+function log(html, cls, right) {
+	const empty = logEl.querySelector('.empty');
+	if (empty) empty.remove();
+	const li = document.createElement('li');
+	if (cls) li.className = cls;
+	li.innerHTML = `<span class="dot"></span><span>${html}</span><span>${right || time()}</span>`;
+	logEl.appendChild(li);
+	logEl.scrollTop = logEl.scrollHeight;
+}
+async function step(id, ms, output) {
+	const n = nodeById[id];
+	setState(id, 'running');
+	if (narrow()) n.group.getWorldPosition(focus);
+	const t = performance.now();
+	await sleep(Math.max(420, ms * 2.2));
+	n.output = output;
+	setState(id, 'success');
+	log(`<b>${n.def.name}</b> · 1 item`, '', `${ms} ms`);
+	if (inspected === id) inspect(id);
+	return performance.now() - t;
+}
+function launch(edge, reverse, color) {
+	return new Promise((resolve) => {
+		const mesh = new THREE.Mesh(pktGeo, new THREE.MeshBasicMaterial({ color: color || 0xffffff, toneMapped: false }));
+		graph.add(mesh);
+		packets.push({ mesh, edge, start: performance.now(), reverse, resolve, dur: reduceMotion ? 1 : 700 });
+	});
+}
+async function flow(from, to) {
+	const e = edgeByKey[`${from}>${to}`];
+	if (!reduceMotion) await launch(e);
+	e.line.material.color.set(OK);
+	e.line.material.emissiveIntensity = 0.55;
+	e.count.visible = true;
+}
+async function think() {
+	// The agent consults its model, memory and tool: packets go out and back.
+	const order = [['memory', 'Simple Memory'], ['model', 'OpenAI Chat Model'], ['tool', 'HTTP Request Tool'], ['model', 'OpenAI Chat Model']];
+	for (const [id] of order) {
+		const e = edgeByKey[`${id}>agent`];
+		setState(id, 'running');
+		if (!reduceMotion) { await launch(e, true, CAT.ai.color); await launch(e, false, 0xffffff); }
+		setState(id, 'success');
+		e.count.visible = true;
+	}
+}
+async function execute() {
+	if (running) return;
+	running = true;
+	runBtn.disabled = true;
+	runBtn.textContent = 'Executing…';
+	statusEl.textContent = 'Running';
+	statusEl.className = 'status';
+	resetRun();
+	logEl.innerHTML = '';
+	const lead = LEADS[runIndex++ % LEADS.length];
+	const hot = lead.score > 70;
+	const t0 = performance.now();
+	log(`Execution started for <b>${lead.name}</b>, score ${lead.score}`, 'info');
+
+	await step('webhook', 12, { body: lead, headers: { 'content-type': 'application/json' } });
+	await flow('webhook', 'set');
+	const fields = { name: lead.name, email: lead.email, company: lead.company, score: lead.score };
+	await step('set', 4, fields);
+	await flow('set', 'if');
+	await step('if', 2, { ...fields, branch: hot ? 'true' : 'false' });
+	const skip = hot ? ['sheets', 'gmail'] : ['agent', 'slack', 'model', 'memory', 'tool'];
+	skip.forEach((id) => setState(id, 'skipped'));
+	if (hot) {
+		await flow('if', 'agent');
+		setState('agent', 'running');
+		await think();
+		await step('agent', 1840, { output: `${lead.name} at ${lead.company} scored ${lead.score}. Open with how they can automate lead intake, then offer a 20-minute call.` });
+		await flow('agent', 'slack');
+		await step('slack', 310, { ok: true, channel: '#sales-hot-leads', text: `Hot lead: ${lead.name} (${lead.company}), score ${lead.score}` });
+		await flow('slack', 'respond');
+	} else {
+		await flow('if', 'sheets');
+		await step('sheets', 420, { spreadsheetId: 'example-sheet-id', updatedRange: 'Nurture!A12:E12', updatedRows: 1 });
+		await flow('sheets', 'gmail');
+		await step('gmail', 380, { to: lead.email, subject: `Ideas for ${lead.company}`, labelIds: ['SENT'] });
+		await flow('gmail', 'respond');
+	}
+	await step('respond', 3, { status: 200, body: { received: true, route: hot ? 'sales' : 'nurture' } });
+	const total = Math.round(performance.now() - t0);
+	log(`Finished · ${hot ? 'true' : 'false'} branch`, 'info', `${(total / 1000).toFixed(1)} s`);
+	if (narrow()) setTimeout(() => focus.set(0, 0, 0), 1200);
+	statusEl.textContent = 'Succeeded';
+	statusEl.className = 'status ok';
+	runBtn.disabled = false;
+	runBtn.textContent = 'Execute workflow';
+	running = false;
+}
+runBtn.addEventListener('click', execute);
+document.getElementById('reset').addEventListener('click', home);
+swayBtn.addEventListener('click', () => { sway = !sway; swayBtn.setAttribute('aria-pressed', String(sway)); });
+
+// ---------------------------------------------------------------- inspector
+const inspector = document.getElementById('inspector');
+let inspected = null;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function inspect(id) {
+	const n = nodeById[id];
+	inspected = id;
+	const cat = CAT[n.def.cat];
+	const params = Object.entries(n.def.params).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+	const out = n.output ? `<pre>${esc(JSON.stringify(n.output, null, 2))}</pre>` : '<p style="margin:0;color:var(--muted);font-size:12.5px">Not executed yet. Select <b>Execute workflow</b>.</p>';
+	inspector.innerHTML = `<header><div><h2>${esc(n.def.name)}</h2><div class="type">${esc(n.def.type)}</div><span class="chip" style="background:#${new THREE.Color(cat.color).getHexString()}">${cat.name}${n.def.subNode ? ' · sub-node' : ''}</span></div><button class="close" type="button" aria-label="Close">✕</button></header><dl>${params}</dl><h3>OUTPUT</h3>${out}`;
+	inspector.hidden = false;
+	inspector.querySelector('.close').addEventListener('click', () => { inspector.hidden = true; inspected = null; });
+}
+const ray = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', (ev) => { downAt = [ev.clientX, ev.clientY]; });
+renderer.domElement.addEventListener('pointerup', (ev) => {
+	if (!downAt || Math.hypot(ev.clientX - downAt[0], ev.clientY - downAt[1]) > 6) return;
+	pointer.set((ev.clientX / window.innerWidth) * 2 - 1, -(ev.clientY / window.innerHeight) * 2 + 1);
+	ray.setFromCamera(pointer, camera);
+	const hit = ray.intersectObjects(pickables, false)[0];
+	if (hit) inspect(hit.object.userData.id);
+});
+renderer.domElement.addEventListener('pointermove', (ev) => {
+	pointer.set((ev.clientX / window.innerWidth) * 2 - 1, -(ev.clientY / window.innerHeight) * 2 + 1);
+	ray.setFromCamera(pointer, camera);
+	renderer.domElement.style.cursor = ray.intersectObjects(pickables, false).length ? 'pointer' : 'grab';
+});
+
+// ---------------------------------------------------------------- loop
+const clock = new THREE.Clock();
+function frame() {
+	const dt = Math.min(clock.getDelta(), 0.05);
+	const t = clock.elapsedTime;
+	const before = controls.target.clone();
+	controls.target.lerp(focus, 0.06);
+	camera.position.add(controls.target.clone().sub(before));
+	if (sway) {
+		const r = camera.position.distanceTo(controls.target);
+		camera.position.setFromSphericalCoords(r, HOME.phi + Math.sin(t * 0.11) * 0.05, HOME.theta + Math.sin(t * 0.17) * 0.2).add(controls.target);
+	}
+	for (const id in nodeById) {
+		const n = nodeById[id];
+		if (n.state === 'running') {
+			const k = 0.5 + 0.5 * Math.sin(t * 9);
+			n.body.material.emissiveIntensity = 0.12 + 0.25 * k;
+			n.outline.material.opacity = 0.6 + 0.4 * k;
+			n.group.position.z = n.def.pos[2] + 0.15 * k;
+		} else {
+			n.group.position.z += (n.def.pos[2] - n.group.position.z) * 0.2;
+		}
+	}
+	for (let i = packets.length - 1; i >= 0; i--) {
+		const p = packets[i];
+		// Real elapsed time, so packets keep their speed on slow devices.
+		const u = Math.min((performance.now() - p.start) / p.dur, 1);
+		p.mesh.position.copy(p.edge.curve.getPointAt(p.reverse ? 1 - u : u));
+		if (u >= 1) { graph.remove(p.mesh); p.mesh.material.dispose(); packets.splice(i, 1); p.resolve(); }
+	}
+	if (!reduceMotion) motes.rotation.y = t * 0.01;
+	controls.update();
+	composer.render();
+	labels.render(scene, camera);
+	requestAnimationFrame(frame);
+}
+frame();
+
+window.addEventListener('resize', () => {
+	camera.aspect = window.innerWidth / window.innerHeight;
+	camera.updateProjectionMatrix();
+	renderer.setSize(window.innerWidth, window.innerHeight);
+	composer.setSize(window.innerWidth, window.innerHeight);
+	bloom.setSize(window.innerWidth, window.innerHeight);
+	labels.setSize(window.innerWidth, window.innerHeight);
+});
+window.__workflow = { execute, nodeById, inspect };
+</script>
 </body>
 </html>
